@@ -7,13 +7,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ['1.23','1.24']
+        go: ["1.23", "1.24", "1.25"]
     steps:
-    - name: setup Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: ${{ matrix.go }}
-    - name: checkout
-      uses: actions/checkout@v4
-    - name: test
-      run: $GITHUB_WORKSPACE/scripts/ci.sh
+      - name: setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go }}
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: test
+        run: $GITHUB_WORKSPACE/scripts/ci.sh
