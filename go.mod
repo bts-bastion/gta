@@ -4,7 +4,6 @@ go 1.24
 
 require (
 	github.com/google/go-cmp v0.6.0
-	github.com/pkg/errors v0.8.0
 	golang.org/x/term v0.27.0
 	golang.org/x/tools v0.36.0
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated

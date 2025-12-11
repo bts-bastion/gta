@@ -6,6 +6,7 @@ package gtaintegration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/build"
@@ -20,7 +21,6 @@ import (
 	"github.com/digitalocean/gta"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -805,31 +805,31 @@ func prepareTemp() string {
 		if info.IsDir() {
 			err := os.Mkdir(dstPath, info.Mode())
 			if err != nil {
-				return errors.Wrap(err, fmt.Sprintf("could not create directory (%s)", dstPath))
+				return fmt.Errorf("could not create directory (%s): %w", dstPath, err)
 			}
 			return nil
 		}
 
 		src, err := os.Open(path)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("could not open file (%s)", path))
+			return fmt.Errorf("could not open file (%s): %w", path, err)
 		}
 		defer src.Close()
 
 		dst, err := os.Create(dstPath)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("could not create file (%s)", dstPath))
+			return fmt.Errorf("could not create file (%s): %w", dstPath, err)
 		}
 		defer dst.Close()
 
 		_, err = io.Copy(dst, src)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("could not copy file (%s)", path))
+			return fmt.Errorf("could not copy file (%s): %w", path, err)
 		}
 
 		err = os.Chmod(dst.Name(), info.Mode())
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("could not set file permission (%s)", dst.Name()))
+			return fmt.Errorf("could not set file permission (%s): %w", dst.Name(), err)
 		}
 		return nil
 	})
