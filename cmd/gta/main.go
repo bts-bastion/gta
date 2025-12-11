@@ -22,8 +22,7 @@ import (
 	"syscall"
 
 	"github.com/digitalocean/gta"
-
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -91,7 +90,7 @@ func main() {
 
 	strung := stringify(packages.AllChanges, *flagBuildableOnly)
 
-	if terminal.IsTerminal(syscall.Stdin) {
+	if term.IsTerminal(syscall.Stdin) {
 		for _, pkg := range strung {
 			fmt.Println(pkg)
 		}
