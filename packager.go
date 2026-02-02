@@ -51,6 +51,11 @@ type Packager interface {
 	// DependentGraph returns the DependentGraph for the current
 	// Golang workspace as defined by their import paths.
 	DependentGraph() (*Graph, error)
+	// TestOnlyDependentGraph returns a graph of test-only dependencies.
+	// These are packages whose tests import a given package, but whose
+	// production code does not. When a package changes, its test-only
+	// dependents should be marked, but their production dependents should not.
+	TestOnlyDependentGraph() (*Graph, error)
 	// EmbeddedBy returns the package import paths of packages that embed a file.
 	EmbeddedBy(string) []string
 }
@@ -61,13 +66,14 @@ func NewPackager(patterns, tags []string) Packager {
 }
 
 func newPackager(cfg *packages.Config, ctx build.Context, patterns []string) Packager {
-	moduleNamesByDir, forward, reverse, packagesByEmbedFile, err := dependencyGraph(cfg, patterns)
+	moduleNamesByDir, forward, reverse, testOnlyReverse, packagesByEmbedFile, err := dependencyGraph(cfg, patterns)
 	return &packageContext{
 		ctx:                 &ctx,
 		err:                 err,
 		packages:            make(map[string]struct{}),
 		forward:             forward,
 		reverse:             reverse,
+		testOnlyReverse:     testOnlyReverse,
 		modulesNamesByDir:   moduleNamesByDir,
 		packagesByEmbedFile: packagesByEmbedFile,
 	}
@@ -100,6 +106,9 @@ type packageContext struct {
 	forward map[string]map[string]struct{}
 	// reverse is a reverse dependency graph (import path -> (dependent import path -> struct{}{}))
 	reverse map[string]map[string]struct{}
+	// testOnlyReverse is a reverse dependency graph for test-only imports.
+	// These are imports that only appear in test files, not production code.
+	testOnlyReverse map[string]map[string]struct{}
 	// modulesNamesByDir is a map of directories to import paths. absolute path
 	// directory -> import path/module name
 	modulesNamesByDir map[string]string
@@ -175,6 +184,24 @@ func (p *packageContext) DependentGraph() (*Graph, error) {
 	return &Graph{graph: graph}, nil
 }
 
+// TestOnlyDependentGraph returns a graph of test-only dependencies.
+func (p *packageContext) TestOnlyDependentGraph() (*Graph, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	graph := make(map[string]map[string]bool)
+	for k := range p.testOnlyReverse {
+		inner := make(map[string]bool)
+		for k2 := range p.testOnlyReverse[k] {
+			inner[k2] = true
+		}
+		graph[k] = inner
+	}
+
+	return &Graph{graph: graph}, nil
+}
+
 func packageFrom(pkg *build.Package) *Package {
 	return &Package{
 		ImportPath: pkg.ImportPath,
@@ -228,7 +255,7 @@ func resolveLocal(pkg *Package, dir string, modulesByDir map[string]string) {
 // module aware mode and flattened forward and reverse transitive dependency
 // graphs. When in GOPATH mode the map of directories to import paths will be
 // empty.
-func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir map[string]string, forward map[string]map[string]struct{}, reverse map[string]map[string]struct{}, packagesByEmbedFile map[string][]string, err error) {
+func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir map[string]string, forward map[string]map[string]struct{}, reverse map[string]map[string]struct{}, testOnlyReverse map[string]map[string]struct{}, packagesByEmbedFile map[string][]string, err error) {
 	loadAllPackages := true
 	for i, pat := range patterns {
 		if strings.HasPrefix(pat, "file=") {
@@ -250,13 +277,19 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 
 	loadedPackages, err := packages.Load(cfg, patterns...)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("loading packages: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("loading packages: %w", err)
 	}
 
 	moduleNamesByDir = make(map[string]string)
 	forward = make(map[string]map[string]struct{})
 	reverse = make(map[string]map[string]struct{})
+	testOnlyReverse = make(map[string]map[string]struct{})
 	packagesByEmbedFile = make(map[string][]string)
+
+	// productionImports tracks the imports from the main (not-for-test) variant
+	// of each package. This is used to distinguish test-only imports from
+	// production imports when processing for-test package variants.
+	productionImports := make(map[string]map[string]struct{})
 
 	seen := make(map[string]struct{})
 	var addPackage func(pkg *packages.Package)
@@ -286,6 +319,10 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 		// the package path of the primary package.
 		pkgPath := normalizeImportPath(pkg)
 
+		// Detect if this is a "for-test" variant. These variants include test
+		// imports that should be tracked separately from production imports.
+		forTest := isForTestVariant(pkg)
+
 		for _, f := range pkg.EmbedFiles {
 			sl := packagesByEmbedFile[f]
 			packagesByEmbedFile[f] = append(sl, pkgPath)
@@ -293,6 +330,13 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 
 		if _, ok := forward[pkgPath]; !ok {
 			forward[pkgPath] = make(map[string]struct{})
+		}
+
+		// For not-for-test packages, record their imports as production imports.
+		if !forTest {
+			if _, ok := productionImports[pkgPath]; !ok {
+				productionImports[pkgPath] = make(map[string]struct{})
+			}
 		}
 
 		for _, importedPkg := range pkg.Imports {
@@ -310,11 +354,32 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 				continue
 			}
 
-			if _, ok := reverse[importedPath]; !ok {
-				reverse[importedPath] = make(map[string]struct{})
+			// For not-for-test packages, record this as a production import and
+			// add to the main reverse graph.
+			if !forTest {
+				productionImports[pkgPath][importedPath] = struct{}{}
+
+				if _, ok := reverse[importedPath]; !ok {
+					reverse[importedPath] = make(map[string]struct{})
+				}
+				revm := reverse[importedPath]
+				revm[pkgPath] = struct{}{}
+			} else {
+				// For for-test variants, check if this import is test-only.
+				// Test-only imports go to testOnlyReverse, not the main reverse graph.
+				if prodImports, ok := productionImports[pkgPath]; ok {
+					if _, isProdImport := prodImports[importedPath]; !isProdImport {
+						// This is a test-only import; add to testOnlyReverse.
+						if _, ok := testOnlyReverse[importedPath]; !ok {
+							testOnlyReverse[importedPath] = make(map[string]struct{})
+						}
+						testOnlyReverse[importedPath][pkgPath] = struct{}{}
+						continue
+					}
+				}
+				// Production imports from for-test variants are already in reverse
+				// from when the main package was processed.
 			}
-			revm := reverse[importedPath]
-			revm[pkgPath] = struct{}{}
 		}
 	}
 
@@ -322,7 +387,7 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 		addPackage(pkg)
 	}
 
-	return moduleNamesByDir, forward, reverse, packagesByEmbedFile, nil
+	return moduleNamesByDir, forward, reverse, testOnlyReverse, packagesByEmbedFile, nil
 }
 
 // normalizeImportPath will return the import path of pkg. The import path may
@@ -362,4 +427,18 @@ func stripVendor(importPath string) string {
 	}
 
 	return importPath
+}
+
+// isForTestVariant returns true if pkg is a "for-test" variant as defined by
+// the Go toolchain. When packages.Load is called with Tests: true, it returns
+// multiple variants for packages with tests:
+//   - Main package: ID = "pkg/path"
+//   - For-test variant: ID = "pkg/path [pkg/path.test]"
+//   - External test package: ID = "pkg/path_test [pkg/path.test]"
+//
+// The for-test variant includes test imports in its Imports field, which the
+// main package does not have. We detect this variant by checking if the ID
+// contains " [" and ends with "]".
+func isForTestVariant(pkg *packages.Package) bool {
+	return strings.Contains(pkg.ID, " [") && strings.HasSuffix(pkg.ID, "]")
 }

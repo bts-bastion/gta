@@ -388,6 +388,12 @@ func (g *GTA) markedPackages() (map[string]map[string]bool, error) {
 		return nil, fmt.Errorf("building dependency graph, %v", err)
 	}
 
+	// we also get the test-only dependent graph
+	testOnlyGraph, err := g.packager.TestOnlyDependentGraph()
+	if err != nil {
+		return nil, fmt.Errorf("building test-only dependency graph, %v", err)
+	}
+
 	paths := map[string]map[string]bool{}
 	for change := range changed {
 		marked := make(map[string]bool)
@@ -398,8 +404,16 @@ func (g *GTA) markedPackages() (map[string]map[string]bool, error) {
 			continue
 		}
 
-		// we traverse the graph and build our list of mark all dependents
+		// we traverse the graph and build our list of dependents
 		graph.Traverse(change, marked)
+
+		// mark direct test-only dependents (packages with tests that import the changed
+		// package, but whose production code does not)
+		if testDeps, ok := testOnlyGraph.graph[change]; ok {
+			for testDep := range testDeps {
+				marked[testDep] = true
+			}
+		}
 
 		// clear the boolean value on the paths that no longer contain packages (i.e.
 		// the Go files were deleted...).

@@ -79,6 +79,11 @@ func (t *testPackager) DependentGraph() (*Graph, error) {
 	return t.graph, nil
 }
 
+func (t *testPackager) TestOnlyDependentGraph() (*Graph, error) {
+	// For legacy tests, return an empty graph
+	return &Graph{graph: make(map[string]map[string]bool)}, nil
+}
+
 func (_ *testPackager) EmbeddedBy(_ string) []string {
 	return nil
 }
@@ -587,6 +592,18 @@ func TestGTA_ChangedPackages(t *testing.T) {
 
 		testChangedPackages(t, diff, nil, want)
 	})
+
+	// "bar_test" is a package with a name ending in "_test", not a test
+	// package, and ensuring the weird name is still found is the point of this
+	// test.
+	//
+	// But there is some subtlety in the way these dependencies are imported and
+	// "fooclientclient" should be excluded b/c "fooclient" is a test-only
+	// dependent of "bar_test", not its production code so we don't propagate
+	// fooclient's production dependencies.
+	//
+	// The nuance of this behavior is handled in test case "change test-only
+	// mock package should not affect production dependents".
 	t.Run("change badly named package", func(t *testing.T) {
 		diff := map[string]Directory{
 			"bar_test": {Exists: true, Files: []string{"util.go"}},
@@ -596,7 +613,6 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			Dependencies: map[string][]Package{
 				"bar_test": {
 					{ImportPath: "fooclient", Dir: "fooclient"},
-					{ImportPath: "fooclientclient", Dir: "fooclientclient"},
 				},
 			},
 			Changes: []Package{
@@ -605,7 +621,6 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			AllChanges: []Package{
 				{ImportPath: "bar_test", Dir: "bar_test"},
 				{ImportPath: "fooclient", Dir: "fooclient"},
-				{ImportPath: "fooclientclient", Dir: "fooclientclient"},
 			},
 		}
 
@@ -665,6 +680,41 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			},
 			AllChanges: []Package{
 				{ImportPath: "unimported", Dir: "unimported"},
+			},
+		}
+
+		testChangedPackages(t, diff, nil, want)
+	})
+
+	// Test-only dependencies should not propagate through the reverse dependency
+	// graph to mark unrelated packages as changed.
+	//
+	// Test data setup:
+	//   - testmock: a mock package that is only used in tests
+	//   - usesmock: imports testmock only in its test file, usesmock_test.go
+	//   - usesmockclient: imports usesmock for production, does not import testmock
+	//
+	// When testmock changes, usesmock should be found affected because its tests
+	//  use testmock, but usesmockclient should not be found affected because it doesn't use
+	// testmock at all).
+	//
+	t.Run("change test-only mock package should not affect production dependents", func(t *testing.T) {
+		diff := map[string]Directory{
+			"testmock": {Exists: true, Files: []string{"testmock.go"}},
+		}
+
+		want := &Packages{
+			Dependencies: map[string][]Package{
+				"testmock": {
+					{ImportPath: "usesmock", Dir: "usesmock"},
+				},
+			},
+			Changes: []Package{
+				{ImportPath: "testmock", Dir: "testmock"},
+			},
+			AllChanges: []Package{
+				{ImportPath: "testmock", Dir: "testmock"},
+				{ImportPath: "usesmock", Dir: "usesmock"},
 			},
 		}
 
