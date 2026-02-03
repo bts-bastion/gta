@@ -88,7 +88,8 @@ func newLoadConfig(tags []string) *packages.Config {
 			packages.NeedEmbedFiles |
 			packages.NeedImports |
 			packages.NeedDeps |
-			packages.NeedModule,
+			packages.NeedModule |
+			packages.NeedForTest,
 		BuildFlags: []string{
 			fmt.Sprintf(`-tags=%s`, strings.Join(tags, ",")),
 		},
@@ -321,7 +322,8 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 
 		// Detect if this is a "for-test" variant. These variants include test
 		// imports that should be tracked separately from production imports.
-		forTest := isForTestVariant(pkg)
+		forTest := pkg.ForTest != ""
+
 
 		for _, f := range pkg.EmbedFiles {
 			sl := packagesByEmbedFile[f]
@@ -427,18 +429,4 @@ func stripVendor(importPath string) string {
 	}
 
 	return importPath
-}
-
-// isForTestVariant returns true if pkg is a "for-test" variant as defined by
-// the Go toolchain. When packages.Load is called with Tests: true, it returns
-// multiple variants for packages with tests:
-//   - Main package: ID = "pkg/path"
-//   - For-test variant: ID = "pkg/path [pkg/path.test]"
-//   - External test package: ID = "pkg/path_test [pkg/path.test]"
-//
-// The for-test variant includes test imports in its Imports field, which the
-// main package does not have. We detect this variant by checking if the ID
-// contains " [" and ends with "]".
-func isForTestVariant(pkg *packages.Package) bool {
-	return strings.Contains(pkg.ID, " [") && strings.HasSuffix(pkg.ID, "]")
 }
