@@ -40,3 +40,14 @@ func SetTags(tags ...string) Option {
 		return nil
 	}
 }
+
+// SetIncludeTransitiveTestDeps sets whether to include test dependencies in the
+// dependency graph traversal. When true (the default), packages that are only
+// imported by test code are included in the full dependency traversal. When
+// false, such test-only dependents are marked but not traversed further.
+func SetIncludeTransitiveTestDeps(include bool) Option {
+	return func(g *GTA) error {
+		g.includeTransitiveTestDeps = include
+		return nil
+	}
+}

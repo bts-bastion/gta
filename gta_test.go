@@ -597,13 +597,10 @@ func TestGTA_ChangedPackages(t *testing.T) {
 	// package, and ensuring the weird name is still found is the point of this
 	// test.
 	//
-	// But there is some subtlety in the way these dependencies are imported and
-	// "fooclientclient" should be excluded b/c "fooclient" is a test-only
-	// dependent of "bar_test", not its production code so we don't propagate
-	// fooclient's production dependencies.
-	//
-	// The nuance of this behavior is handled in test case "change test-only
-	// mock package should not affect production dependents".
+	// fooclient imports bar_test only in its test file, making it a test-only
+	// dependent. With -test-transitive=true (default), we traverse test-only
+	// dependents and their production dependents, so fooclientclient is
+	// included.
 	t.Run("change badly named package", func(t *testing.T) {
 		diff := map[string]Directory{
 			"bar_test": {Exists: true, Files: []string{"util.go"}},
@@ -613,6 +610,7 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			Dependencies: map[string][]Package{
 				"bar_test": {
 					{ImportPath: "fooclient", Dir: "fooclient"},
+					{ImportPath: "fooclientclient", Dir: "fooclientclient"},
 				},
 			},
 			Changes: []Package{
@@ -621,6 +619,7 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			AllChanges: []Package{
 				{ImportPath: "bar_test", Dir: "bar_test"},
 				{ImportPath: "fooclient", Dir: "fooclient"},
+				{ImportPath: "fooclientclient", Dir: "fooclientclient"},
 			},
 		}
 
@@ -686,19 +685,20 @@ func TestGTA_ChangedPackages(t *testing.T) {
 		testChangedPackages(t, diff, nil, want)
 	})
 
-	// Test-only dependencies should not propagate through the reverse dependency
-	// graph to mark unrelated packages as changed.
+	// Test-only dependencies propagate through the reverse dependency graph
+	// when -test-transitive=true (the default).
 	//
 	// Test data setup:
 	//   - testmock: a mock package that is only used in tests
 	//   - usesmock: imports testmock only in its test file, usesmock_test.go
 	//   - usesmockclient: imports usesmock for production, does not import testmock
 	//
-	// When testmock changes, usesmock should be found affected because its tests
-	//  use testmock, but usesmockclient should not be found affected because it doesn't use
-	// testmock at all).
+	// When testmock changes with -test-transitive=true, usesmock is found affected
+	// because its tests use testmock, and usesmockclient is also found affected
+	// because it imports usesmock (and we traverse all dependents when
+	// -test-transitive=true).
 	//
-	t.Run("change test-only mock package should not affect production dependents", func(t *testing.T) {
+	t.Run("change test-only mock package affects production dependents with test=true", func(t *testing.T) {
 		diff := map[string]Directory{
 			"testmock": {Exists: true, Files: []string{"testmock.go"}},
 		}
@@ -707,6 +707,7 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			Dependencies: map[string][]Package{
 				"testmock": {
 					{ImportPath: "usesmock", Dir: "usesmock"},
+					{ImportPath: "usesmockclient", Dir: "usesmockclient"},
 				},
 			},
 			Changes: []Package{
@@ -715,6 +716,7 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			AllChanges: []Package{
 				{ImportPath: "testmock", Dir: "testmock"},
 				{ImportPath: "usesmock", Dir: "usesmock"},
+				{ImportPath: "usesmockclient", Dir: "usesmockclient"},
 			},
 		}
 

@@ -34,6 +34,7 @@ func main() {
 	flagBuildableOnly := flag.Bool("buildable-only", true, "keep buildable changed packages only")
 	flagChangedFiles := flag.String("changed-files", "", "path to a file containing a newline separated list of files that have changed")
 	flagTags := flag.String("tags", "", "a list of build tags to consider")
+	flagTestTransitive := flag.Bool("test-transitive", true, "legacy behavior; include transitive test dependencies in the reverse dependency graph traversal")
 
 	flag.Parse()
 
@@ -53,6 +54,7 @@ func main() {
 	options := []gta.Option{
 		gta.SetPrefixes(parseStringSlice(*flagInclude)...),
 		gta.SetTags(tags...),
+		gta.SetIncludeTransitiveTestDeps(*flagTestTransitive),
 	}
 
 	if len(*flagChangedFiles) == 0 {

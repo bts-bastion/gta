@@ -324,7 +324,6 @@ func dependencyGraph(cfg *packages.Config, patterns []string) (moduleNamesByDir 
 		// imports that should be tracked separately from production imports.
 		forTest := pkg.ForTest != ""
 
-
 		for _, f := range pkg.EmbedFiles {
 			sl := packagesByEmbedFile[f]
 			packagesByEmbedFile[f] = append(sl, pkgPath)
