@@ -87,18 +87,20 @@ func (p *Packages) UnmarshalJSON(b []byte) error {
 // A GTA provides a method of building dirty packages, and their dependent
 // packages.
 type GTA struct {
-	differ   Differ
-	packager Packager
-	prefixes []string
-	tags     []string
-	roots    []string
+	differ                    Differ
+	packager                  Packager
+	prefixes                  []string
+	tags                      []string
+	roots                     []string
+	includeTransitiveTestDeps bool
 }
 
 // New returns a new GTA with various options passed to New. Options will be
 // applied in order so that later options can override earlier options.
 func New(opts ...Option) (*GTA, error) {
 	gta := &GTA{
-		differ: NewGitDiffer(),
+		differ:                    NewGitDiffer(),
+		includeTransitiveTestDeps: true,
 	}
 
 	for _, opt := range opts {
@@ -388,6 +390,12 @@ func (g *GTA) markedPackages() (map[string]map[string]bool, error) {
 		return nil, fmt.Errorf("building dependency graph, %v", err)
 	}
 
+	// we also get the test-only dependent graph
+	testOnlyGraph, err := g.packager.TestOnlyDependentGraph()
+	if err != nil {
+		return nil, fmt.Errorf("building test-only dependency graph, %v", err)
+	}
+
 	paths := map[string]map[string]bool{}
 	for change := range changed {
 		marked := make(map[string]bool)
@@ -398,8 +406,38 @@ func (g *GTA) markedPackages() (map[string]map[string]bool, error) {
 			continue
 		}
 
-		// we traverse the graph and build our list of mark all dependents
-		graph.Traverse(change, marked)
+		// Traverse dependents. When includeTransitiveTestDeps is true, test-only
+		// edges are traversed the same as production edges (replicating the old
+		// behavior where all imports were in a single reverse graph).
+		var traverse func(node string)
+		traverse = func(node string) {
+			if marked[node] {
+				return
+			}
+			marked[node] = true
+
+			if edges, ok := graph.graph[node]; ok {
+				for edge := range edges {
+					traverse(edge)
+				}
+			}
+			if g.includeTransitiveTestDeps {
+				if edges, ok := testOnlyGraph.graph[node]; ok {
+					for edge := range edges {
+						traverse(edge)
+					}
+				}
+			}
+		}
+		traverse(change)
+
+		// When not traversing transitive test deps, still mark direct test-only
+		// dependents (their tests need re-running, but we don't traverse further).
+		if !g.includeTransitiveTestDeps {
+			for testDep := range testOnlyGraph.graph[change] {
+				marked[testDep] = true
+			}
+		}
 
 		// clear the boolean value on the paths that no longer contain packages (i.e.
 		// the Go files were deleted...).
