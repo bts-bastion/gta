@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 var (
@@ -93,6 +95,7 @@ type GTA struct {
 	tags                      []string
 	roots                     []string
 	includeTransitiveTestDeps bool
+	disableWorkspace          bool
 }
 
 // New returns a new GTA with various options passed to New. Options will be
@@ -111,7 +114,7 @@ func New(opts ...Option) (*GTA, error) {
 	}
 
 	if gta.roots == nil {
-		roots, err := toplevel()
+		roots, err := toplevel(gta.disableWorkspace)
 		if err != nil {
 			return nil, fmt.Errorf("could not get top level directory")
 		}
@@ -137,7 +140,7 @@ func New(opts ...Option) (*GTA, error) {
 		// when a file is changed. e.g. if a vendored file that is constrained to
 		// Windows is changed, that package wouldn't load at all and trying to find
 		// the package's dependencies would fail.
-		gta.packager = NewPackager(nil, gta.tags)
+		gta.packager = NewPackager(nil, gta.tags, gta.disableWorkspace)
 	}
 
 	return gta, nil
@@ -259,6 +262,35 @@ func (g *GTA) markedPackages() (map[string]map[string]bool, error) {
 	onlyTestPackagesChanged := make(map[string]struct{})
 	for abs, dir := range dirs {
 		// TODO(bc): handle changes to go.mod when vendoring is not being used.
+
+		// When go.work or go.mod changes, the dependency graph may have changed
+		// significantly. Mark all resolvable packages that match our prefix
+		// filter as changed so their dependents will be re-evaluated.
+		hasModuleConfig := false
+		for _, f := range dir.Files {
+			if f == "go.work" || f == "go.mod" {
+				hasModuleConfig = true
+				break
+			}
+		}
+		if hasModuleConfig {
+			graph, err := g.packager.DependentGraph()
+			if err == nil {
+				for pkg := range graph.graph {
+					if !hasPrefixIn(pkg, g.prefixes) {
+						continue
+					}
+					if _, err := g.packager.PackageFromImport(pkg); err == nil {
+						changed[pkg] = false
+					}
+				}
+			}
+			// If this directory has no Go files (e.g. workspace root with
+			// only go.work), skip further package-level processing.
+			if !hasGoFile(dir.Files) {
+				continue
+			}
+		}
 
 		// Add packages that embed the files of dir.
 		for _, f := range dir.Files {
@@ -599,17 +631,67 @@ func hasOnlyTestFilenames(sl []string) bool {
 	return true
 }
 
-func toplevel() ([]string, error) {
+func toplevel(disableWorkspace bool) ([]string, error) {
 	if os.Getenv("GO111MODULE") == "off" {
 		return gopaths()
 	}
 
-	root, err := moduleroot()
+	if !disableWorkspace {
+		roots, err := workspaceroots()
+		if err != nil {
+			return nil, err
+		}
+		if roots != nil {
+			return roots, nil
+		}
+	}
+
+	root, err := moduleroot(disableWorkspace)
 	if err != nil {
 		return nil, err
 	}
 	return []string{root}, nil
+}
 
+// workspaceroots detects whether the current directory is within a Go
+// workspace (go.work) and returns the absolute paths of all workspace module
+// directories. It returns nil, nil when not in workspace mode.
+func workspaceroots() ([]string, error) {
+	cmd := exec.Command("go", "env", "GOWORK")
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("could not get GOWORK: %w", err)
+	}
+	gowork := strings.TrimSpace(string(b))
+	if gowork == "" || gowork == "off" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(gowork)
+	if err != nil {
+		return nil, fmt.Errorf("could not read go.work file %q: %w", gowork, err)
+	}
+
+	workFile, err := modfile.ParseWork(gowork, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse go.work file %q: %w", gowork, err)
+	}
+
+	workDir := filepath.Dir(gowork)
+	var roots []string
+	for _, use := range workFile.Use {
+		absDir, err := filepath.Abs(filepath.Join(workDir, use.Path))
+		if err != nil {
+			return nil, fmt.Errorf("could not resolve workspace module path %q: %w", use.Path, err)
+		}
+		roots = append(roots, absDir)
+	}
+
+	if len(roots) == 0 {
+		return nil, nil
+	}
+
+	return roots, nil
 }
 
 func gopaths() ([]string, error) {
@@ -626,8 +708,11 @@ func gopaths() ([]string, error) {
 	return roots, nil
 }
 
-func moduleroot() (string, error) {
+func moduleroot(disableWorkspace bool) (string, error) {
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}")
+	if disableWorkspace {
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+	}
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("could get not get module root: %w", err)
