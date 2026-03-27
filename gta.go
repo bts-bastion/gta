@@ -96,6 +96,8 @@ type GTA struct {
 	roots                     []string
 	includeTransitiveTestDeps bool
 	disableWorkspace          bool
+	baseGoMod                 string
+	baseGoSum                 string
 }
 
 // New returns a new GTA with various options passed to New. Options will be
