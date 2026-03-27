@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/digitalocean/gta"
+	"github.com/bts-bastion/gta"
 
 	"github.com/google/go-cmp/cmp"
 )
