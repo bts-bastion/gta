@@ -60,9 +60,9 @@ type Packager interface {
 	EmbeddedBy(string) []string
 }
 
-func NewPackager(patterns, tags []string) Packager {
+func NewPackager(patterns, tags []string, disableWorkspace bool) Packager {
 	build.Default.BuildTags = tags
-	return newPackager(newLoadConfig(tags), build.Default, patterns)
+	return newPackager(newLoadConfig(tags, disableWorkspace), build.Default, patterns)
 }
 
 func newPackager(cfg *packages.Config, ctx build.Context, patterns []string) Packager {
@@ -81,8 +81,8 @@ func newPackager(cfg *packages.Config, ctx build.Context, patterns []string) Pac
 
 // newLoadConfig returns a *packages.Config suitable for use by packages.Load.
 // The constructor here is mostly useful for tests.
-func newLoadConfig(tags []string) *packages.Config {
-	return &packages.Config{
+func newLoadConfig(tags []string, disableWorkspace bool) *packages.Config {
+	cfg := &packages.Config{
 		Mode: packages.NeedName |
 			packages.NeedFiles |
 			packages.NeedEmbedFiles |
@@ -95,6 +95,10 @@ func newLoadConfig(tags []string) *packages.Config {
 		},
 		Tests: true,
 	}
+	if disableWorkspace {
+		cfg.Env = append(os.Environ(), "GOWORK=off")
+	}
+	return cfg
 }
 
 // packageContext implements the Packager interface.

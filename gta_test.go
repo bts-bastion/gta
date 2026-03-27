@@ -313,7 +313,7 @@ func TestGTA_ChangedPackages(t *testing.T) {
 			popd := chdir(t, exporter.Filename(e, testModule, ""))
 			t.Cleanup(popd)
 
-			cfg := newLoadConfig(nil)
+			cfg := newLoadConfig(nil, false)
 			e.Config.Mode = cfg.Mode
 			e.Config.BuildFlags = cfg.BuildFlags
 			e.Config.Tests = cfg.Tests

@@ -51,3 +51,13 @@ func SetIncludeTransitiveTestDeps(include bool) Option {
 		return nil
 	}
 }
+
+// SetDisableWorkspace disables Go workspace (go.work) detection. When true,
+// GTA operates in single-module mode even if a go.work file is present.
+// This is equivalent to setting the GOWORK=off environment variable.
+func SetDisableWorkspace(disable bool) Option {
+	return func(g *GTA) error {
+		g.disableWorkspace = disable
+		return nil
+	}
+}

@@ -35,6 +35,7 @@ func main() {
 	flagChangedFiles := flag.String("changed-files", "", "path to a file containing a newline separated list of files that have changed")
 	flagTags := flag.String("tags", "", "a list of build tags to consider")
 	flagTestTransitive := flag.Bool("test-transitive", true, "legacy behavior; include transitive test dependencies in the reverse dependency graph traversal")
+	flagNoWorkspace := flag.Bool("no-workspace", false, "disable Go workspace (go.work) support; operate in single-module mode")
 
 	flag.Parse()
 
@@ -55,6 +56,7 @@ func main() {
 		gta.SetPrefixes(parseStringSlice(*flagInclude)...),
 		gta.SetTags(tags...),
 		gta.SetIncludeTransitiveTestDeps(*flagTestTransitive),
+		gta.SetDisableWorkspace(*flagNoWorkspace),
 	}
 
 	if len(*flagChangedFiles) == 0 {
